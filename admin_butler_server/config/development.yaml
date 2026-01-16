@@ -1,36 +1,28 @@
-# Configuration for the development server.
+# Development configuration
 apiServer:
-  port: 8085
-  publicHost: localhost
-  publicPort: 8085
+  port: 8080
   publicScheme: http
-  # Allow requests from the Flutter Web dev server
-  extraWebOrigins:
-    - http://localhost:42245
-    - http://localhost:8080
-    - http://localhost:8088
+  publicHost: localhost
+  publicPort: 8080
 
 webServer:
-  port: 8086
-  publicHost: localhost
-  publicPort: 8086
+  port: 8082
   publicScheme: http
+  publicHost: localhost
+  publicPort: 8082
 
 insightsServer:
-  port: 8087
-  publicHost: localhost
-  publicPort: 8087
+  port: 8081
   publicScheme: http
+  publicHost: localhost
+  publicPort: 8081
 
+# This is the part I missed!
 database:
   host: localhost
   port: 8093
   name: admin_butler
   user: postgres
-  # Password is set in passwords.yaml
 
-redis:
-  host: localhost
-  port: 8094
-  user: default
-  # Password is set in passwords.yaml
+# The fix for the upload error
+maxRequestSize: 20971520
