@@ -1,0 +1,449 @@
+import 'dart:convert';
+import 'package:admin_butler_client/admin_butler_client.dart';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
+import 'package:serverpod_flutter/serverpod_flutter.dart';
+import 'director_overlay.dart'; 
+
+late final Client client;
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final serverUrl = await getServerUrl();
+  client = Client(serverUrl)..connectivityMonitor = FlutterConnectivityMonitor();
+  runApp(const AdminButlerApp());
+}
+
+class AdminButlerApp extends StatelessWidget {
+  const AdminButlerApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'AdminButler',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF6366F1),
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
+      ),
+      home: const DashboardPage(),
+    );
+  }
+}
+
+class DashboardPage extends StatefulWidget {
+  const DashboardPage({super.key});
+
+  @override
+  State<DashboardPage> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends State<DashboardPage> {
+  List<Document> _documents = [];
+  bool _isLoading = false;
+  String _butlerStatus = "At your service, sir.";
+  final ImagePicker _picker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshDocuments();
+  }
+
+  // --- DIRECTOR MODE LOGIC ---
+  void _handleDirectorAction(String action) {
+    if (action == "click:fab") {
+      _simulateScanForVideo();
+    } else if (action == "click:draft_btn") {
+      if (_documents.isNotEmpty) _showDraftModal(_documents[0]);
+    } else if (action == "click:copy_btn") {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Draft copied to clipboard")),
+      );
+    } else if (action == "close:modal") {
+      // Handled via navigator pop or overlay logic
+    }
+  }
+
+  void _simulateScanForVideo() async {
+    setState(() {
+      _isLoading = true;
+      _butlerStatus = "Analyzing document via Gemini...";
+    });
+
+    await Future.delayed(const Duration(seconds: 4));
+
+    final mockDoc = Document(
+      fileName: "utility_bill_sept.jpg",
+      summary: "Electric Utility Bill - September Service",
+      amount: 145.50,
+      dueDate: DateTime.now().add(const Duration(days: 5)),
+      category: "bill",
+      // FIXED: Added backslash before $145.50
+      replyDraft: "Subject: Inquiry regarding Invoice #4492\n\nDear Provider,\n\nPlease find attached the payment for the September utility services (\$145.50).\n\nCould you please clarify the 'Surcharge' listed on line 3? It appears higher than our contract rate.\n\nBest regards,\nAdministrator",
+      status: "processed",
+      createdAt: DateTime.now(),
+      userId: 0,
+      fileUrl: "https://templates.invoicehome.com/invoice-template-us-neat-750px.png", 
+    );
+
+    setState(() {
+      _documents.insert(0, mockDoc);
+      _isLoading = false;
+      _butlerStatus = "Document processed successfully.";
+    });
+  }
+  // ---------------------------
+
+  Future<void> _refreshDocuments() async {
+    setState(() => _isLoading = true);
+    try {
+      final documents = await client.document.getDocuments();
+      setState(() {
+        _documents = documents;
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint("Error fetching documents: $e");
+      setState(() {
+        _isLoading = false;
+        _butlerStatus = "Apologies, I couldn't reach the archives.";
+      });
+    }
+  }
+
+  Future<void> _scanDocument() async {
+    final XFile? image = await _picker.pickImage(
+      source: ImageSource.camera,
+      maxWidth: 1024,
+      maxHeight: 1024,
+      imageQuality: 85,
+    );
+
+    if (image == null) return;
+
+    setState(() {
+      _isLoading = true;
+      _butlerStatus = "Analyzing document, please wait...";
+    });
+
+    try {
+      final bytes = await image.readAsBytes();
+      final base64Image = base64Encode(bytes);
+
+      final result = await client.document.scanDocument(base64Image);
+
+      setState(() {
+        _documents.insert(0, result);
+        _butlerStatus = "Document processed successfully.";
+      });
+
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted) setState(() => _butlerStatus = "At your service, sir.");
+      });
+    } catch (e) {
+      debugPrint("Error scanning document: $e");
+      setState(() {
+        _butlerStatus = "Something went wrong during analysis.";
+      });
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DirectorOverlay(
+      onActionTriggered: _handleDirectorAction,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text(
+            "AdminButler",
+            style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.2),
+          ),
+          centerTitle: true,
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          actions: [
+            IconButton(
+              onPressed: _refreshDocuments,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+            ),
+          ),
+          child: Column(
+            children: [
+              _buildButlerHeader(),
+              Expanded(
+                child: _isLoading && _documents.isEmpty
+                    ? const Center(child: CircularProgressIndicator())
+                    : _documents.isEmpty
+                        ? _buildEmptyState()
+                        : _buildDocumentList(),
+              ),
+            ],
+          ),
+        ),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: _scanDocument,
+          label: const Text("Scan Document"),
+          icon: const Icon(Icons.camera_alt_rounded),
+          backgroundColor: const Color(0xFF6366F1),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildButlerHeader() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      margin: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B).withOpacity(0.8),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFF6366F1).withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          const CircleAvatar(
+            backgroundColor: Color(0xFF6366F1),
+            radius: 28,
+            child: Icon(Icons.person, color: Colors.white, size: 32),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  "Butler George",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _butlerStatus,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.7),
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_isLoading)
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.inventory_2_outlined, size: 80, color: Colors.white.withOpacity(0.2)),
+          const SizedBox(height: 16),
+          Text(
+            "No documents yet.",
+            style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 18),
+          ),
+          const SizedBox(height: 8),
+          const Text("Try scanning a bill or receipt."),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDocumentList() {
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+      itemCount: _documents.length,
+      itemBuilder: (context, index) {
+        final doc = _documents[index];
+        return _buildDocumentCard(doc);
+      },
+    );
+  }
+
+  void _showDraftModal(Document doc) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E293B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.auto_awesome, color: Color(0xFF6366F1)),
+                const SizedBox(width: 8),
+                Text(
+                  "Butler George's Suggestion",
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              doc.replyDraft ?? "I haven't prepared a draft for this document yet, sir.",
+              style: const TextStyle(fontSize: 16, height: 1.5),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () => _handleDirectorAction("click:copy_btn"),
+                icon: const Icon(Icons.copy),
+                label: const Text("Copy Draft"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6366F1),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDocumentCard(Document doc) {
+    final bool isError = doc.status == "error";
+    final Color categoryColor = _getCategoryColor(doc.category);
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: categoryColor.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: categoryColor.withOpacity(0.5)),
+                  ),
+                  child: Text(
+                    doc.category.toUpperCase(),
+                    style: TextStyle(color: categoryColor, fontSize: 10, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  DateFormat('MMM dd, yyyy').format(doc.createdAt),
+                  style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              doc.summary,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            ),
+            if (doc.fileUrl != null) ...[
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  doc.fileUrl!,
+                  height: 120,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    height: 120,
+                    color: Colors.white.withOpacity(0.05),
+                    child: const Icon(Icons.image_not_supported, color: Colors.white24),
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            if (doc.amount != null || doc.dueDate != null)
+              Row(
+                children: [
+                  if (doc.amount != null)
+                    _buildInfoChip(Icons.attach_money, "\$${doc.amount!.toStringAsFixed(2)}", Colors.green),
+                  if (doc.dueDate != null)
+                    _buildInfoChip(
+                      Icons.calendar_today,
+                      "Due: ${DateFormat('MMM dd').format(doc.dueDate!)}",
+                      Colors.amber,
+                    ),
+                ],
+              ),
+            if (doc.replyDraft != null) ...[
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => _handleDirectorAction("click:draft_btn"),
+                  icon: const Icon(Icons.auto_awesome, size: 18),
+                  label: const Text("View Draft Reply"),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF6366F1),
+                    side: const BorderSide(color: Color(0xFF6366F1)),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoChip(IconData icon, String label, Color color) {
+    return Container(
+      margin: const EdgeInsets.only(right: 12),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13)),
+        ],
+      ),
+    );
+  }
+
+  Color _getCategoryColor(String category) {
+    switch (category.toLowerCase()) {
+      case 'bill':
+        return Colors.redAccent;
+      case 'receipt':
+        return Colors.greenAccent;
+      case 'letter':
+        return Colors.blueAccent;
+      default:
+        return Colors.purpleAccent;
+    }
+  }
+}

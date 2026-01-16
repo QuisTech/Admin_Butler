@@ -1,0 +1,20 @@
+# Files and directories created by pub
+.dart_tool/
+.packages
+
+# Conventional directory for build outputs
+build/
+
+# Ignore the flutter web app directory
+web/app
+
+# Directory created by dartdoc
+doc/api/
+
+# Credentials
+config/passwords.yaml
+key.txt
+*.txt
+output.txt
+models_list*.txt
+config/passwords.yaml
